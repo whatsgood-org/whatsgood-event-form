@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useRef } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { TenantBranding, PromotionTierConfig } from "@/lib/types";
 
 interface Props {
@@ -18,6 +18,20 @@ export default function PromotionModal({ branding, tiers, onSelect, onClose, loa
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const dragState = useRef({ dragging: false, startX: 0, scrollLeft: 0, moved: false });
+
+  // Whether the card row actually overflows right now. Measured rather than
+  // inferred from tier count: the embedding iframe sets the width, so the same
+  // three tiers scroll on one customer's site and fit on another's.
+  const [scrolls, setScrolls] = useState(false);
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const measure = () => setScrolls(el.scrollWidth > el.clientWidth + 1);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [tiers.length]);
 
   function onMouseDown(e: React.MouseEvent) {
     const el = scrollRef.current;
@@ -40,9 +54,16 @@ export default function PromotionModal({ branding, tiers, onSelect, onClose, loa
     if (scrollRef.current) scrollRef.current.style.cursor = "grab";
   }
 
+  // Two cards fit comfortably in 42rem; a third overflowed and looked clipped,
+  // because the row scrolls with its scrollbar hidden. Widen with the tier
+  // count so the common 3-tier case fits outright. `width` still caps this at
+  // the viewport — the form is embedded in an iframe the customer sizes, so a
+  // narrow host can still leave the row scrolling. That case is handled by the
+  // edge fade and the vertical stack below, not by this number.
+  const maxWidth = tiers.length >= 3 ? "60rem" : "42rem";
   const modalStyle: React.CSSProperties = bottomOffset != null
-    ? { position: "absolute", bottom: bottomOffset, left: "50%", transform: "translateX(-50%)", width: "calc(100% - 24px)", maxWidth: "42rem" }
-    : { position: "absolute", top: "50%", left: "50%", transform: "translate(-50%, -50%)", width: "calc(100% - 24px)", maxWidth: "42rem" };
+    ? { position: "absolute", bottom: bottomOffset, left: "50%", transform: "translateX(-50%)", width: "calc(100% - 24px)", maxWidth }
+    : { position: "absolute", top: "50%", left: "50%", transform: "translate(-50%, -50%)", width: "calc(100% - 24px)", maxWidth };
 
   return (
     <div className="fixed inset-0 z-50 bg-black/50" onClick={onClose}>
@@ -57,29 +78,46 @@ export default function PromotionModal({ branding, tiers, onSelect, onClose, loa
           <p className="text-gray-500 text-sm mt-1">Choose how you'd like to list your event</p>
         </div>
 
-        {/* Cards */}
-        <div
-          ref={scrollRef}
-          className="flex gap-4 overflow-x-auto snap-x snap-mandatory pl-5 pr-5 pb-6 select-none"
-          style={{ cursor: "grab", scrollbarWidth: "none", WebkitOverflowScrolling: "touch" } as React.CSSProperties}
-          onMouseDown={onMouseDown}
-          onMouseMove={onMouseMove}
-          onMouseUp={onMouseUp}
-          onMouseLeave={onMouseUp}
-        >
-          {tiers.map(tier => (
-            <TierCard
-              key={tier.id}
-              tier={tier}
-              primary={primary}
-              loading={loading}
-              onSelect={onSelect}
-              scrollable
-              getDragged={() => dragState.current.moved}
+        {/* Cards.
+            Below `sm` the row becomes a vertical stack: on a narrow embed no
+            amount of width makes three cards fit side by side, and a stack is
+            easier to read than a carousel nobody notices. At `sm` and up it
+            stays a horizontal drag-scroll row. */}
+        <div className="relative">
+          {/* One `overflow-auto` covers both directions: stacked, only the
+              max-height can scroll; in a row, only the width can. */}
+          <div
+            ref={scrollRef}
+            className="flex flex-col sm:flex-row gap-4 max-h-[70vh] sm:max-h-none overflow-auto sm:snap-x sm:snap-mandatory pl-5 pr-5 pb-6 select-none"
+            style={{ cursor: "grab", scrollbarWidth: "none", WebkitOverflowScrolling: "touch" } as React.CSSProperties}
+            onMouseDown={onMouseDown}
+            onMouseMove={onMouseMove}
+            onMouseUp={onMouseUp}
+            onMouseLeave={onMouseUp}
+          >
+            {tiers.map(tier => (
+              <TierCard
+                key={tier.id}
+                tier={tier}
+                primary={primary}
+                loading={loading}
+                onSelect={onSelect}
+                scrollable
+                getDragged={() => dragState.current.moved}
+              />
+            ))}
+            {/* Right padding sentinel — matches pl-5 so padding is visible after last card */}
+            <div className="hidden sm:block min-w-5 flex-shrink-0" />
+          </div>
+
+          {/* Scroll affordance. The row hides its scrollbar, so without this a
+              clipped card reads as a broken layout rather than "keep going". */}
+          {scrolls && (
+            <div
+              aria-hidden
+              className="hidden sm:block pointer-events-none absolute top-0 right-0 bottom-6 w-12 bg-gradient-to-l from-white to-transparent"
             />
-          ))}
-          {/* Right padding sentinel — matches pl-5 so padding is visible after last card */}
-          <div className="min-w-5 flex-shrink-0" />
+          )}
         </div>
 
         {/* Close */}
@@ -113,7 +151,7 @@ function TierCard({
   getDragged: () => boolean;
 }) {
   const isPaid = !!tier.stripe_price_id;
-  const sizeClass = "min-w-[220px] snap-start flex-1";
+  const sizeClass = "w-full sm:w-auto sm:min-w-[220px] sm:snap-start sm:flex-1";
 
   function handleSelect() {
     if (getDragged()) return;
