@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
+import { MAX_UPLOAD_BYTES, prepareImageForUpload, uploadErrorMessage } from "@/lib/image";
 
 interface Props {
   images: string[];
@@ -10,15 +11,37 @@ interface Props {
   customerUuid?: string;
 }
 
+const UPLOAD_TIMEOUT_MS = 90_000;
+const UPLOAD_ATTEMPTS = 2;
+
 async function uploadFile(file: File, apiBase: string, eventTitle?: string, customerUuid?: string): Promise<string> {
+  // Shrink before sending (ENG-671) — originals over Cloudinary's limits used to 502.
+  const upload = await prepareImageForUpload(file);
+  // Undecodable in this browser and still oversized — fail fast instead of uploading 20 MB to a 413.
+  if (upload.size > MAX_UPLOAD_BYTES) throw new Error(uploadErrorMessage(file.name, 413));
   const formData = new FormData();
-  formData.append("file", file);
+  formData.append("file", upload);
   if (eventTitle) formData.append("event_title", eventTitle);
   if (customerUuid) formData.append("customer_uuid", customerUuid);
-  const res = await fetch(`${apiBase}/public/upload-image`, { method: "POST", body: formData });
-  if (!res.ok) throw new Error("Upload failed");
-  const data = await res.json();
-  return data.url;
+
+  for (let attempt = 1; ; attempt++) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), UPLOAD_TIMEOUT_MS);
+    let res: Response;
+    try {
+      res = await fetch(`${apiBase}/public/upload-image`, { method: "POST", body: formData, signal: controller.signal });
+    } catch {
+      // Network drop / timeout (common on mobile, or a cold Railway instance) — retry once.
+      if (attempt < UPLOAD_ATTEMPTS) continue;
+      throw new Error(uploadErrorMessage(file.name, null));
+    } finally {
+      clearTimeout(timer);
+    }
+    if (res.ok) return (await res.json()).url;
+    const body = await res.json().catch(() => ({}));
+    if (res.status >= 500 && res.status !== 502 && attempt < UPLOAD_ATTEMPTS) continue;
+    throw new Error(uploadErrorMessage(file.name, res.status, body.detail));
+  }
 }
 
 export default function ImageUploader({ images, onChange, apiBase, eventTitle, customerUuid }: Props) {
@@ -48,9 +71,11 @@ export default function ImageUploader({ images, onChange, apiBase, eventTitle, c
       .filter((r): r is PromiseFulfilledResult<string> => r.status === "fulfilled")
       .map(r => r.value);
 
-    const failed = results.filter(r => r.status === "rejected").length;
+    const failures = results
+      .filter((r): r is PromiseRejectedResult => r.status === "rejected")
+      .map(r => (r.reason instanceof Error ? r.reason.message : "An image failed to upload."));
 
-    if (failed > 0) setError(`${failed} image${failed > 1 ? "s" : ""} failed to upload.`);
+    if (failures.length > 0) setError(failures.join(" "));
     if (uploaded.length > 0) onChange([...images, ...uploaded]);
 
     setUploading(false);
