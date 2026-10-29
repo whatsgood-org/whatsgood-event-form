@@ -54,8 +54,24 @@ To learn more about Next.js, take a look at the following resources:
 
 You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
 
-## Deploy on Vercel
+## Hosting
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+Hosted on Vercel: project `whatsgood-event-form` in the Whats Good team, served at
+https://whatsgood-event-form.vercel.app. It was previously on Netlify (`add-event-form.netlify.app`).
+Merges to `main` deploy to production, and every PR gets a preview URL.
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Environment variables:
+
+| Variable | Needed for |
+|---|---|
+| `NEXT_PUBLIC_API_BASE_URL` | events-api base URL; falls back to `https://whatsgoodapi.up.railway.app` |
+| `OPENAI_API_KEY` | AI tag suggestions (`/api/suggest-tags`). Without it the route returns 503 and the build still passes |
+
+Two settings outside this repo must name the form's address. Change them together whenever it moves:
+
+- **`FORM_BASE_URL` on events-api (Railway).** Stripe Checkout returns buyers to `${FORM_BASE_URL}/success`
+  or `/cancel`. The success page reports back to the form via `postMessage`, and the form only accepts
+  messages from its own address. If `FORM_BASE_URL` names a different host, payments still go through,
+  but the form never shows the success screen.
+- **Add Event Link base URL** in whatsgood-admin (Super-admin → Settings → Other). This builds each
+  customer's `/embed?customer=<uuid>` link and pushes it to every consumer app.

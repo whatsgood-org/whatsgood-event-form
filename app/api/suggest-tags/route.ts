@@ -25,7 +25,10 @@ function checkRateLimit(ip: string): boolean {
 // ---------------------------------------------------------------------------
 // Handler
 // ---------------------------------------------------------------------------
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+// Created on first use, not at import: `new OpenAI()` throws without a key, and
+// `next build` imports this route, so a module-level client fails any build
+// that lacks OPENAI_API_KEY (e.g. Vercel preview builds).
+let openai: OpenAI | null = null;
 
 export async function POST(req: NextRequest) {
   const ip =
@@ -60,6 +63,11 @@ export async function POST(req: NextRequest) {
   if (!tags?.length) {
     return NextResponse.json({ error: "No tags available." }, { status: 400 });
   }
+
+  if (!process.env.OPENAI_API_KEY) {
+    return NextResponse.json({ error: "Tag suggestions are unavailable." }, { status: 503 });
+  }
+  openai ??= new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
   const tagList = tags.map(t => `${t.id}: ${t.name}`).join("\n");
 
